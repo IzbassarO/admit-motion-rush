@@ -2155,3 +2155,44 @@ button {
   color: #06080c;
   background: var(--blue-hi);
 }
+
+/* narrow phones: keep the top bar within the viewport */
+@media (max-width: 720px) {
+  .topbar {
+    gap: 8px;
+  }
+  .brand {
+    font-size: 0.95rem;
+    gap: 8px;
+    min-width: 0;
+  }
+  .brand svg {
+    width: 24px;
+    height: 24px;
+  }
+  .brand-tag {
+    display: none;
+  }
+  .topbar-right {
+    gap: 6px;
+  }
+  .privacy-pill {
+    padding: 6px 9px;
+  }
+}
+@media (max-width: 400px) {
+  .privacy-short {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .hud-combo {
+    gap: 6px;
+  }
+  .hud-combo .hud-label {
+    letter-spacing: 0.06em;
+  }
+  .hud-combo-value small {
+    display: none;
+  }
+}
