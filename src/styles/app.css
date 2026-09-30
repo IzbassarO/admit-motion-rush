@@ -1450,3 +1450,42 @@ button {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------- ?debug read-out ---------- */
+.debug-panel {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 7;
+  max-width: min(420px, calc(100% - 24px));
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.78);
+  border: 1px solid var(--line);
+  font: 11px/1.5 var(--mono);
+  color: #cfd8e3;
+  pointer-events: none;
+}
+.debug-row {
+  margin-top: 4px;
+}
+.debug-valid b {
+  color: var(--green);
+}
+.debug-partial b {
+  color: var(--yellow);
+}
+.debug-unknown b {
+  color: var(--muted);
+}
+.debug-issue {
+  color: var(--yellow);
+}
+@media (max-width: 720px) {
+  .debug-panel {
+    font-size: 9px;
+    bottom: auto;
+    top: 76px;
+    opacity: 0.85;
+  }
+}

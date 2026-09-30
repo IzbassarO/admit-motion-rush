@@ -200,7 +200,7 @@ export function GameHud({ hud, fx }: { hud: HudState; fx: Fx | null }) {
       </div>
 
       {p && (
-        <div className={`prompt prompt-${p.gesture.toLowerCase()}`} key={p.id}>
+        <div className={`prompt prompt-${p.gesture.toLowerCase()}`} key={`prompt-${p.id}`}>
           <span className="prompt-hazard">{GESTURE_INFO[p.gesture].hazard}</span>
           <div className="prompt-main">
             <GestureIcon gesture={p.gesture} className="prompt-icon" />
@@ -212,7 +212,7 @@ export function GameHud({ hud, fx }: { hud: HudState; fx: Fx | null }) {
       )}
 
       {fx && (
-        <div className={`fx fx-${fx.kind}`} key={fx.id}>
+        <div className={`fx fx-${fx.kind}`} key={`fx-${fx.id}`}>
           <strong>{fx.title}</strong>
           {fx.detail && <span>{fx.detail}</span>}
         </div>

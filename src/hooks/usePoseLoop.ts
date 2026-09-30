@@ -1,6 +1,12 @@
-import type { PoseLandmarker } from '@mediapipe/tasks-vision';
 import { useEffect, useRef } from 'react';
 import type { Landmark, PoseFrame } from '../motion/poseTypes';
+
+type RawLandmark = { x: number; y: number; z: number; visibility?: number };
+
+/** Anything that turns a video frame into pose landmarks (MediaPipe PoseLandmarker, or the ?sim source). */
+export interface PoseSource {
+  detectForVideo(video: HTMLVideoElement, timestamp: number): { landmarks: RawLandmark[][]; worldLandmarks: RawLandmark[][] };
+}
 
 export interface LoopTick {
   /** latest pose (null if nobody detected) */
@@ -25,7 +31,7 @@ const copy = (l: { x: number; y: number; z: number; visibility?: number }): Land
  */
 export function usePoseLoop(
   video: HTMLVideoElement | null,
-  landmarker: PoseLandmarker | null,
+  landmarker: PoseSource | null,
   onTick: (t: LoopTick) => void,
   onError?: (e: unknown) => void,
 ): void {

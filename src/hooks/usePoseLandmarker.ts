@@ -1,5 +1,7 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import { useCallback, useEffect, useState } from 'react';
+import { createSimSource, SIM_MODE } from '../sim/simulator';
+import type { PoseSource } from './usePoseLoop';
 
 // Version must match package.json; only used as a fallback if self-hosted files fail.
 const MP_VERSION = '1.0.1';
@@ -45,9 +47,10 @@ async function create(): Promise<PoseLandmarker> {
 }
 
 // Module-level singleton: survives React StrictMode double mounts and phase changes.
-let pending: Promise<PoseLandmarker> | null = null;
+let pending: Promise<PoseSource> | null = null;
 
-function load(): Promise<PoseLandmarker> {
+function load(): Promise<PoseSource> {
+  if (SIM_MODE) return (pending ??= Promise.resolve(createSimSource()));
   if (!pending) {
     pending = create().catch((e) => {
       pending = null; // allow retry
@@ -61,13 +64,13 @@ export type LandmarkerStatus = 'loading' | 'ready' | 'error';
 
 export interface LandmarkerApi {
   status: LandmarkerStatus;
-  landmarker: PoseLandmarker | null;
+  landmarker: PoseSource | null;
   error: string | null;
   retry: () => void;
 }
 
 export function usePoseLandmarker(): LandmarkerApi {
-  const [landmarker, setLandmarker] = useState<PoseLandmarker | null>(null);
+  const [landmarker, setLandmarker] = useState<PoseSource | null>(null);
   const [status, setStatus] = useState<LandmarkerStatus>('loading');
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);

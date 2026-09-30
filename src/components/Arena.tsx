@@ -7,9 +7,13 @@ import type { LandmarkerApi } from '../hooks/usePoseLandmarker';
 import { usePoseLoop, type LoopTick } from '../hooks/usePoseLoop';
 import { assessPoseQuality, CalibrationCollector } from '../motion/calibration';
 import { CoachSmoother, coachMessage, MistakeTracker, type CoachMessage } from '../motion/errorCoach';
+import { evaluateDuck } from '../motion/duckDetector';
 import { GestureEngine, type EngineOutput } from '../motion/gestureEngine';
+import { evaluateGuard } from '../motion/guardDetector';
+import { evaluatePunch } from '../motion/punchDetector';
 import type { GestureEvaluation, GestureName } from '../motion/poseTypes';
 import { drawPose, type OverlayStyle } from '../render/drawPose';
+import { DebugPanel, type DebugData } from './DebugPanel';
 import { CalibrationPanel, CoachBar, Countdown, GameHud, PausedPanel, SetupPanel, TutorialPanel } from './Hud';
 import { ResultsPanel } from './ResultsPanel';
 
@@ -17,6 +21,7 @@ export type ArenaPhase = 'setup' | 'calibration' | 'tutorial' | 'countdown' | 'g
 
 export const TUTORIAL_STEPS: GestureName[] = ['GUARD', 'DUCK', 'PUNCH'];
 const COUNTDOWN_STEP_MS = 800;
+const DEBUG = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
 
 interface Props {
   camera: CameraApi;
@@ -90,6 +95,8 @@ export function Arena({ camera, pose, onExit }: Props) {
   const [fps, setFps] = useState(0);
   const [loopError, setLoopError] = useState<string | null>(null);
   const fxId = useRef(0);
+  const [debug, setDebug] = useState<DebugData | null>(null);
+  const debugAt = useRef(0);
 
   // attach camera stream to the <video>
   useEffect(() => {
@@ -255,6 +262,20 @@ export function Arena({ camera, pose, onExit }: Props) {
         lastOutRef.current = out;
       }
       const fired = fresh && out ? out.fired : [];
+
+      if (DEBUG && fresh && now - debugAt.current > 150) {
+        debugAt.current = now;
+        const cal = engineRef.current?.calibration ?? null;
+        setDebug({
+          quality: quality.status,
+          calibrated: !!cal,
+          evaluations:
+            out?.evaluations ??
+            (frame
+              ? { GUARD: evaluateGuard(frame, cal), DUCK: evaluateDuck(frame, cal), PUNCH: evaluatePunch(frame) }
+              : null),
+        });
+      }
 
       const applyEvaluation = (ev: GestureEvaluation | null, msg: CoachMessage | null) => {
         if (!ev) return;
@@ -451,6 +472,7 @@ export function Arena({ camera, pose, onExit }: Props) {
           {phase === 'results' && results && (
             <ResultsPanel results={results} onPlayAgain={playAgain} onRecalibrate={recalibrate} onHome={onExit} />
           )}
+          {DEBUG && debug && <DebugPanel data={debug} fps={fps} />}
           {showSetup && (
             <SetupPanel
               camera={camera}

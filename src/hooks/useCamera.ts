@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createSimStream, SIM_MODE } from '../sim/simulator';
 
 export type CameraStatus = 'idle' | 'requesting' | 'ready' | 'denied' | 'notfound' | 'busy' | 'unsupported' | 'error';
 
@@ -47,6 +48,13 @@ export function useCamera(): CameraApi {
 
   const start = useCallback(async () => {
     if (streamRef.current) return;
+    if (SIM_MODE) {
+      const s = createSimStream();
+      streamRef.current = s;
+      setStream(s);
+      setStatus('ready');
+      return;
+    }
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       setStatus('unsupported');
       setError(
