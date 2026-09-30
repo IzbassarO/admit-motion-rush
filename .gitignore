@@ -1,0 +1,8 @@
+node_modules
+dist
+*.tsbuildinfo
+.vercel
+.DS_Store
+*.log
+# copied from node_modules by scripts/copy-mediapipe-wasm.mjs
+public/mediapipe
