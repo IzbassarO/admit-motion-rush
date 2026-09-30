@@ -117,6 +117,8 @@ export function evaluatePunch(frame: PoseFrame, _calib: unknown = null, relaxed 
       issue: {
         code: 'PUNCH_TOO_HIGH',
         message: `Punch forward at shoulder height — your ${a.side} arm is pointing up.`,
+        side: a.side,
+        measure: { label: 'Arm angle', value: `+${Math.round(a.elevation)}°`, target: `≤+${T.maxElevation}°` },
         region,
         severity,
       },
@@ -132,6 +134,8 @@ export function evaluatePunch(frame: PoseFrame, _calib: unknown = null, relaxed 
       issue: {
         code: 'PUNCH_TOO_LOW',
         message: `Raise your ${a.side} fist to shoulder height.`,
+        side: a.side,
+        measure: { label: 'Arm angle', value: `${Math.round(a.elevation)}°`, target: `≥${T.minElevation}°` },
         region,
         severity,
       },
@@ -147,6 +151,8 @@ export function evaluatePunch(frame: PoseFrame, _calib: unknown = null, relaxed 
       issue: {
         code: 'PUNCH_ELBOW',
         message: `Extend your ${a.side} elbow more — ${angle}°, target >${T.enterElbowAngle}°.`,
+        side: a.side,
+        measure: { label: 'Elbow', value: `${angle}°`, target: `${T.enterElbowAngle}°+` },
         region,
         severity,
       },
@@ -161,6 +167,8 @@ export function evaluatePunch(frame: PoseFrame, _calib: unknown = null, relaxed 
     issue: {
       code: 'PUNCH_REACH',
       message: `Reach further with your ${a.side} arm — drive the fist away from your shoulder.`,
+      side: a.side,
+      measure: { label: 'Reach', value: `${a.reach.toFixed(2)}×`, target: `${needReach.toFixed(2)}×` },
       region,
       severity,
     },

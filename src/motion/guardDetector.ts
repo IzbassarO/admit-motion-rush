@@ -103,6 +103,7 @@ export function evaluateGuard(
       issue: {
         code: side === 'left' ? 'GUARD_LEFT_LOW' : 'GUARD_RIGHT_LOW',
         message: `Raise your ${side} hand above your shoulder.`,
+        side,
         region: side === 'left' ? 'leftArm' : 'rightArm',
         severity,
       },

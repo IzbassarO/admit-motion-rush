@@ -59,12 +59,22 @@ export type IssueCode =
   | 'PUNCH_TOO_LOW'
   | 'PUNCH_ARM_HIDDEN';
 
+/** A real measurement behind an issue, e.g. { label: 'Knee', value: '126°', target: '≤115°' }. */
+export interface IssueMeasure {
+  label: string;
+  value: string;
+  target: string;
+}
+
 export interface FormIssue {
   code: IssueCode;
   message: string;
   region: BodyRegion;
   /** minor = close to valid, major = far off */
   severity: 'minor' | 'major';
+  /** which side the issue is about, when it is one-sided */
+  side?: Side;
+  measure?: IssueMeasure;
 }
 
 /** A landmark the overlay should highlight, optionally with a metric label (e.g. "124°"). */

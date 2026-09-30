@@ -72,6 +72,7 @@ export function evaluateDuck(
       issue: {
         code: 'DUCK_NOT_LOW',
         message: `Go lower — dropped ${Math.round(progress * 100)}% of the target depth.`,
+        measure: { label: 'Depth', value: `${Math.round(progress * 100)}%`, target: '100%' },
         region: 'body',
         severity: progress > 0.6 ? 'minor' : 'major',
       },
@@ -98,6 +99,7 @@ export function evaluateDuck(
       issue: {
         code: 'DUCK_NOT_LOW',
         message: `Drop your hips lower — ${Math.round(progress * 100)}% of the target depth.`,
+        measure: { label: 'Depth', value: `${Math.round(progress * 100)}%`, target: '100%' },
         region: 'hips',
         severity: progress > 0.6 ? 'minor' : 'major',
       },
@@ -136,6 +138,7 @@ export function evaluateDuck(
         message: dropOk
           ? `Bend your knees more — knee angle ${kneeRounded}°, target <${T.enterKneeAngle}°.`
           : `Go lower — knee angle ${kneeRounded}°, target <${T.enterKneeAngle}°.`,
+        measure: { label: 'Knee', value: `${kneeRounded}°`, target: `≤${T.enterKneeAngle}°` },
         region: 'legs',
         severity,
       },
@@ -151,6 +154,7 @@ export function evaluateDuck(
     issue: {
       code: 'DUCK_NOT_LOW',
       message: `Sink your hips lower — ${Math.round(dropProgress * 100)}% of the target depth.`,
+      measure: { label: 'Depth', value: `${Math.round(dropProgress * 100)}%`, target: '100%' },
       region: 'hips',
       severity,
     },

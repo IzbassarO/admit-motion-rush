@@ -153,3 +153,49 @@ export class CalibrationCollector {
     return this.done ? computeCalibration(this.samples) : null;
   }
 }
+
+export type Confidence = 'good' | 'fair' | 'poor' | 'none';
+
+/** Camera-check read-out. Everything here is derived from landmark positions and visibility scores. */
+export interface FramingReport {
+  person: boolean;
+  /** shoulders and hips visible */
+  upperBody: boolean;
+  distance: 'ok' | 'too_close' | 'too_far' | 'unknown';
+  /** at least one knee + ankle visible (recommended for DUCK) */
+  knees: boolean;
+  /** mean landmark visibility of nose, shoulders and hips */
+  confidence: Confidence;
+  /** minimum needed to calibrate */
+  ready: boolean;
+  /** the single most useful instruction right now */
+  message: string;
+}
+
+export function framingReport(frame: PoseFrame | null): FramingReport {
+  const quality = assessPoseQuality(frame);
+  const m = quality.metrics;
+  const person = quality.status !== 'no_person';
+  let confidence: Confidence = 'none';
+  if (frame && person) {
+    const ids: number[] = [LM.NOSE, LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER, LM.LEFT_HIP, LM.RIGHT_HIP];
+    const mean = ids.reduce((a, i) => a + (frame.image[i]?.visibility ?? 0), 0) / ids.length;
+    confidence = mean >= 0.85 ? 'good' : mean >= 0.6 ? 'fair' : 'poor';
+  }
+  const distance =
+    quality.status === 'too_close' ? 'too_close' : quality.status === 'too_far' ? 'too_far' : m ? 'ok' : 'unknown';
+  const upperBody = !!m?.hipsVisible;
+  const knees = !!m?.legsVisible;
+  const ready = person && quality.status === 'ok' && upperBody;
+
+  let message: string;
+  if (!person) message = 'Step into the frame so the camera can see you.';
+  else if (distance === 'too_close') message = 'Move back a little — you are too close to the camera.';
+  else if (distance === 'too_far') message = 'Move closer to the camera.';
+  else if (quality.status === 'low_confidence') message = 'Face the camera — tracking is unsure. Even lighting helps.';
+  else if (!upperBody) message = 'Make sure your full upper body is visible — step back until your hips are in frame.';
+  else if (!knees) message = 'Step back so we can see your knees (best for Duck).';
+  else message = 'Looking good — hold still.';
+
+  return { person, upperBody, distance, knees, confidence, ready, message };
+}

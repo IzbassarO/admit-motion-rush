@@ -4,6 +4,8 @@ import { pointsForHit, reactionWindowMs } from './scoring';
 export const GAME_DURATION_MS = 60_000;
 const FIRST_PROMPT_DELAY_MS = 900;
 const GAP_MS = 650;
+/** Awarded when the player fixes a coached (partial) attempt and completes the same move in time. */
+export const COACH_BONUS = 50;
 
 export interface Prompt {
   id: number;
@@ -14,7 +16,17 @@ export interface Prompt {
 
 export type GameEvent =
   | { type: 'prompt'; prompt: Prompt }
-  | { type: 'hit'; prompt: Prompt; reactionMs: number; points: number; combo: number }
+  | {
+      type: 'hit';
+      prompt: Prompt;
+      reactionMs: number;
+      /** points for the move itself (excluding the coach bonus) */
+      points: number;
+      combo: number;
+      /** true when the Error Coach flagged this prompt and the player fixed it */
+      corrected: boolean;
+      coachBonus: number;
+    }
   | { type: 'wrong'; prompt: Prompt; got: GestureName }
   | { type: 'miss'; prompt: Prompt }
   | { type: 'end' };
@@ -38,6 +50,7 @@ export interface GameResults {
   attempts: number;
   bestCombo: number;
   avgReactionMs: number | null;
+  correctionsMade: number;
   mostCommonMistake: { code: IssueCode; label: string; count: number } | null;
   perGesture: Record<GestureName, { hits: number; prompts: number }>;
 }
@@ -50,6 +63,11 @@ export class GameSession {
   private promptSeq = 0;
   private lastGesture: GestureName | null = null;
   private ended = false;
+  /** the Error Coach showed a form issue for the current prompt */
+  private promptCoached = false;
+  /** time the current prompt spent with tracking lost (does not count against the window) */
+  private promptFrozenMs = 0;
+  private lastUpdateAt: number | null = null;
 
   score = 0;
   combo = 0;
@@ -57,6 +75,7 @@ export class GameSession {
   correct = 0;
   attempts = 0;
   reactions: number[] = [];
+  correctionsMade = 0;
   perGesture: Record<GestureName, { hits: number; prompts: number }> = {
     GUARD: { hits: 0, prompts: 0 },
     DUCK: { hits: 0, prompts: 0 },
@@ -116,9 +135,29 @@ export class GameSession {
     return g;
   }
 
-  /** Advance the game. `fired` are gestures the engine confirmed on this frame. */
-  update(now: number, fired: readonly GestureName[]): GameEvent[] {
+  /**
+   * The Error Coach is currently showing a form issue for the requested gesture.
+   * If the player then completes that same gesture before the window closes, it counts
+   * as a correction (once per prompt).
+   */
+  markCoached(): void {
+    if (this.prompt && !this.paused && !this.ended) this.promptCoached = true;
+  }
+
+  get currentPromptCoached(): boolean {
+    return this.promptCoached;
+  }
+
+  /**
+   * Advance the game. `fired` are gestures the engine confirmed on this frame.
+   * While `tracking` is false the prompt's reaction clock is frozen so a lost pose
+   * never turns into a miss.
+   */
+  update(now: number, fired: readonly GestureName[], tracking = true): GameEvent[] {
+    const dt = this.lastUpdateAt === null ? 0 : Math.max(0, now - this.lastUpdateAt);
+    this.lastUpdateAt = now;
     if (this.ended || this.paused) return [];
+    if (!tracking && this.prompt) this.promptFrozenMs += dt;
     const events: GameEvent[] = [];
     const elapsed = this.elapsed(now);
 
@@ -132,7 +171,7 @@ export class GameSession {
     const p = this.prompt;
     if (p) {
       if (fired.length > 0) {
-        const reactionMs = now - p.shownAt;
+        const reactionMs = now - p.shownAt - this.promptFrozenMs;
         this.attempts++;
         this.perGesture[p.gesture].prompts++;
         if (fired.includes(p.gesture)) {
@@ -142,15 +181,18 @@ export class GameSession {
           this.perGesture[p.gesture].hits++;
           this.reactions.push(reactionMs);
           const points = pointsForHit(reactionMs, p.windowMs, this.combo);
-          this.score += points;
-          events.push({ type: 'hit', prompt: p, reactionMs, points, combo: this.combo });
+          const corrected = this.promptCoached;
+          const coachBonus = corrected ? COACH_BONUS : 0;
+          if (corrected) this.correctionsMade++;
+          this.score += points + coachBonus;
+          events.push({ type: 'hit', prompt: p, reactionMs, points, combo: this.combo, corrected, coachBonus });
         } else {
           this.combo = 0;
           events.push({ type: 'wrong', prompt: p, got: fired[0] });
         }
         this.prompt = null;
         this.nextPromptAt = now + GAP_MS;
-      } else if (now - p.shownAt >= p.windowMs) {
+      } else if (now - p.shownAt - this.promptFrozenMs >= p.windowMs) {
         this.attempts++;
         this.perGesture[p.gesture].prompts++;
         this.combo = 0;
@@ -165,6 +207,8 @@ export class GameSession {
         shownAt: now,
         windowMs: reactionWindowMs(elapsed, this.durationMs),
       };
+      this.promptCoached = false;
+      this.promptFrozenMs = 0;
       events.push({ type: 'prompt', prompt: this.prompt });
     }
     return events;
@@ -181,6 +225,7 @@ export class GameSession {
         ? Math.round(this.reactions.reduce((a, b) => a + b, 0) / this.reactions.length)
         : null,
       mostCommonMistake,
+      correctionsMade: this.correctionsMade,
       perGesture: this.perGesture,
     };
   }
