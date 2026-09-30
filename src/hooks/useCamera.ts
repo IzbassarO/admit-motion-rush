@@ -19,7 +19,8 @@ function describe(err: unknown): { status: CameraStatus; message: string } {
     case 'PermissionDeniedError':
       return {
         status: 'denied',
-        message: 'Camera access was blocked. Allow the camera for this site in your browser settings, then try again.',
+        message:
+          'Camera access is required to play MotionRush. Enable camera permission in your browser (the camera icon in the address bar) and try again.',
       };
     case 'NotFoundError':
     case 'OverconstrainedError':
@@ -29,7 +30,8 @@ function describe(err: unknown): { status: CameraStatus; message: string } {
     case 'TrackStartError':
       return { status: 'busy', message: 'The camera is in use by another app or tab. Close it and try again.' };
     default:
-      return { status: 'error', message: `Could not start the camera${err instanceof Error ? `: ${err.message}` : '.'}` };
+      console.error('[MotionRush] camera error', err);
+      return { status: 'error', message: 'The camera could not be started. Close other apps using it and try again.' };
   }
 }
 

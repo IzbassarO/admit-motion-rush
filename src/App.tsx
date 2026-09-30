@@ -45,6 +45,7 @@ export default function App() {
           <span>
             Motion<b>Rush</b>
           </span>
+          <span className="brand-tag">Arena</span>
         </button>
         <div className="topbar-right">
           <span className="privacy-pill" title="Pose detection runs on this device. No camera frames are sent anywhere.">

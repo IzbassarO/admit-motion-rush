@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { play } from '../audio/sfx';
 import { submitScore, type PersonalBest } from '../game/personalBest';
-import { GameSession, type GameEvent, type GameResults, type Prompt } from '../game/session';
+import { GameSession, type GameEvent, type GameResults } from '../game/session';
 import type { CameraApi } from '../hooks/useCamera';
 import type { LandmarkerApi } from '../hooks/usePoseLandmarker';
 import { usePoseLoop, type LoopTick } from '../hooks/usePoseLoop';
-import { assessPoseQuality, CalibrationCollector } from '../motion/calibration';
+import { assessPoseQuality, CalibrationCollector, framingReport, type FramingReport } from '../motion/calibration';
 import { CoachSmoother, coachMessage, MistakeTracker, type CoachMessage } from '../motion/errorCoach';
 import { evaluateDuck } from '../motion/duckDetector';
 import { GestureEngine, type EngineOutput } from '../motion/gestureEngine';
@@ -13,14 +13,38 @@ import { evaluateGuard } from '../motion/guardDetector';
 import { evaluatePunch } from '../motion/punchDetector';
 import type { GestureEvaluation, GestureName } from '../motion/poseTypes';
 import { drawPose, type OverlayStyle } from '../render/drawPose';
+import { CoachPanel } from './CoachPanel';
 import { DebugPanel, type DebugData } from './DebugPanel';
-import { CalibrationPanel, CoachBar, Countdown, GameHud, PausedPanel, SetupPanel, TutorialPanel } from './Hud';
+import { GameHud, type HudState } from './GameHud';
+import {
+  CalibrationPanel,
+  CameraCheckPanel,
+  Countdown,
+  PausedPanel,
+  SetupPanel,
+  TUTORIAL_STEPS,
+  TutorialPanel,
+} from './Hud';
 import { ResultsPanel } from './ResultsPanel';
+import { ThreatLayer, type Outcome } from './ThreatLayer';
 
-export type ArenaPhase = 'setup' | 'calibration' | 'tutorial' | 'countdown' | 'game' | 'results';
+export type ArenaPhase = 'setup' | 'check' | 'calibration' | 'tutorial' | 'countdown' | 'game' | 'results';
 
-export const TUTORIAL_STEPS: GestureName[] = ['GUARD', 'DUCK', 'PUNCH'];
 const COUNTDOWN_STEP_MS = 800;
+/** camera check: how long framing must stay good before moving on */
+const CHECK_STABLE_MS = 1000;
+/** pause the round after this long without a trackable player */
+const PAUSE_AFTER_MS = 700;
+const GESTURE_SOUND: Record<GestureName, 'guard' | 'duck' | 'punch'> = { GUARD: 'guard', DUCK: 'duck', PUNCH: 'punch' };
+const EMPTY_HUD: HudState = {
+  score: 0,
+  combo: 0,
+  timeLeftMs: 60_000,
+  prompt: null,
+  promptHeld: false,
+  trackingLost: false,
+  gain: null,
+};
 const DEBUG = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
 
 interface Props {
@@ -29,20 +53,6 @@ interface Props {
   onExit: () => void;
 }
 
-export interface HudState {
-  score: number;
-  combo: number;
-  timeLeftMs: number;
-  prompt: Prompt | null;
-  promptHeld: boolean;
-}
-
-export interface Fx {
-  id: number;
-  kind: 'hit' | 'wrong' | 'miss' | 'go';
-  title: string;
-  detail?: string;
-}
 
 export interface FinalResults extends GameResults {
   personalBest: PersonalBest;
@@ -79,16 +89,21 @@ export function Arena({ camera, pose, onExit }: Props) {
   const badQualityMs = useRef(0);
   const goodQualityMs = useRef(0);
   const countdownShown = useRef(-1);
+  const checkReadyMs = useRef(0);
+  const gainRef = useRef<HudState['gain']>(null);
 
   // --- UI state (updated only when values change) ---
   const [calib, setCalib] = useState({ progress: 0, hint: 'Step into the frame.' });
   const [tutorialStep, setTutorialStep] = useState(0);
   const [tutorialCleared, setTutorialCleared] = useState(false);
   const [coach, setCoach] = useState<CoachMessage | null>(null);
-  const [hud, setHud] = useState<HudState>({ score: 0, combo: 0, timeLeftMs: 60_000, prompt: null, promptHeld: false });
+  const [hud, setHud] = useState<HudState>(EMPTY_HUD);
+  const [check, setCheck] = useState<FramingReport | null>(null);
+  const [checkCanSkip, setCheckCanSkip] = useState(false);
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [goFx, setGoFx] = useState(0);
   const [countdown, setCountdown] = useState(3);
   const [paused, setPaused] = useState<string | null>(null);
-  const [fx, setFx] = useState<Fx | null>(null);
   const [stageFlash, setStageFlash] = useState<{ kind: 'hit' | 'wrong' | 'miss'; id: number } | null>(null);
   const [results, setResults] = useState<FinalResults | null>(null);
   const [trackingMsg, setTrackingMsg] = useState<string | null>(null);
@@ -141,27 +156,33 @@ export function Arena({ camera, pose, onExit }: Props) {
     c.height = Math.max(1, Math.round(stageSize.h * dpr));
   }, [stageSize]);
 
-  // setup -> calibration once camera, model and video are all live
+  // setup -> camera check once camera, model and video are all live
   useEffect(() => {
     if (phase === 'setup' && camera.status === 'ready' && pose.status === 'ready' && videoPlaying) {
-      collectorRef.current = new CalibrationCollector();
-      setPhase('calibration');
+      checkReadyMs.current = 0;
+      setCheckCanSkip(false);
+      setPhase('check');
     }
   }, [phase, camera.status, pose.status, videoPlaying, setPhase]);
+
+  const startCalibration = useCallback(() => {
+    collectorRef.current = new CalibrationCollector();
+    setCalib({ progress: 0, hint: 'Hold still…' });
+    setPhase('calibration');
+  }, [setPhase]);
 
   // pause the round when the tab is hidden (rAF stops, the clock must too)
   useEffect(() => {
     const onVis = () => {
       if (document.hidden && phaseRef.current === 'game') {
         sessionRef.current?.pause(performance.now());
-        setPaused('Paused while the tab was hidden.');
+        setPaused('Paused while the tab was hidden. Step back into frame to continue.');
       }
     };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
-  const pushFx = useCallback((f: Omit<Fx, 'id'>) => setFx({ ...f, id: ++fxId.current }), []);
   const flashStage = useCallback((kind: 'hit' | 'wrong' | 'miss') => setStageFlash({ kind, id: ++fxId.current }), []);
 
   const startCountdown = useCallback(() => {
@@ -181,7 +202,9 @@ export function Arena({ camera, pose, onExit }: Props) {
     badQualityMs.current = 0;
     setPaused(null);
     setResults(null);
-    setHud({ score: 0, combo: 0, timeLeftMs: 60_000, prompt: null, promptHeld: false });
+    gainRef.current = null;
+    setOutcome(null);
+    setHud(EMPTY_HUD);
     setPhase('game');
   }, [setPhase]);
 
@@ -209,28 +232,46 @@ export function Arena({ camera, pose, onExit }: Props) {
             smootherRef.current.reset();
             play('prompt');
             break;
-          case 'hit':
+          case 'hit': {
             mistakesRef.current.endPrompt();
+            smootherRef.current.reset();
+            setCoach(null);
             flashRef.current = 1;
-            play(e.combo > 1 && e.combo % 5 === 0 ? 'combo' : 'hit', e.combo);
+            play(GESTURE_SOUND[e.prompt.gesture]);
+            if (e.corrected) window.setTimeout(() => play('corrected'), 140);
+            else if (e.combo > 1 && e.combo % 5 === 0) window.setTimeout(() => play('combo'), 120);
             flashStage('hit');
-            pushFx({
+            gainRef.current = { id: ++fxId.current, value: e.points + e.coachBonus };
+            setOutcome({
+              id: e.prompt.id,
               kind: 'hit',
-              title: `+${e.points}`,
-              detail: `${e.reactionMs < 900 ? 'LIGHTNING' : e.reactionMs < 1500 ? 'GREAT' : 'GOOD'} · ${(e.reactionMs / 1000).toFixed(2)}s${e.combo > 1 ? ` · x${e.combo}` : ''}`,
+              gesture: e.prompt.gesture,
+              points: e.points,
+              reactionMs: e.reactionMs,
+              combo: e.combo,
+              corrected: e.corrected,
+              coachBonus: e.coachBonus,
             });
             break;
+          }
           case 'wrong':
-            mistakesRef.current.endPrompt();
-            play('wrong');
-            flashStage('wrong');
-            pushFx({ kind: 'wrong', title: 'Wrong move', detail: `You did ${e.got} — needed ${e.prompt.gesture}` });
-            break;
           case 'miss':
             mistakesRef.current.endPrompt();
-            play('miss');
-            flashStage('miss');
-            pushFx({ kind: 'miss', title: 'Too slow', detail: `${e.prompt.gesture} missed` });
+            smootherRef.current.reset();
+            setCoach(null);
+            play(e.type);
+            flashStage(e.type);
+            setOutcome({
+              id: e.prompt.id,
+              kind: e.type,
+              gesture: e.prompt.gesture,
+              points: 0,
+              reactionMs: 0,
+              combo: 0,
+              corrected: false,
+              coachBonus: 0,
+              got: e.type === 'wrong' ? e.got : undefined,
+            });
             break;
           case 'end':
             finishGame();
@@ -238,7 +279,7 @@ export function Arena({ camera, pose, onExit }: Props) {
         }
       }
     },
-    [finishGame, flashStage, pushFx],
+    [finishGame, flashStage],
   );
 
   const onTick = useCallback(
@@ -257,7 +298,7 @@ export function Arena({ camera, pose, onExit }: Props) {
       }
 
       let out = lastOutRef.current;
-      if (fresh && engineRef.current && p !== 'calibration') {
+      if (fresh && engineRef.current && p !== 'calibration' && p !== 'check') {
         out = engineRef.current.update(frame, now);
         lastOutRef.current = out;
       }
@@ -289,7 +330,31 @@ export function Arena({ camera, pose, onExit }: Props) {
         }
       };
 
-      if (p === 'calibration') {
+      if (p === 'check') {
+        if (fresh) {
+          const r = framingReport(frame);
+          setCheck((c) =>
+            c &&
+            c.message === r.message &&
+            c.person === r.person &&
+            c.upperBody === r.upperBody &&
+            c.distance === r.distance &&
+            c.knees === r.knees &&
+            c.confidence === r.confidence
+              ? c
+              : r,
+          );
+          checkReadyMs.current = r.ready ? checkReadyMs.current + dt : 0;
+          const stable = checkReadyMs.current >= CHECK_STABLE_MS;
+          setCheckCanSkip(stable && !r.knees);
+          if (stable && r.knees) {
+            play('tick');
+            collectorRef.current = new CalibrationCollector();
+            setCalib({ progress: 0, hint: 'Hold still…' });
+            setPhase('calibration');
+          }
+        }
+      } else if (p === 'calibration') {
         if (fresh) {
           const c = collectorRef.current;
           c.add(frame, now);
@@ -318,7 +383,7 @@ export function Arena({ camera, pose, onExit }: Props) {
         const ev = out.evaluations[target];
         if (tutorialAdvanceAt.current === null && fired.includes(target)) {
           flashRef.current = 1;
-          play('hit', step + 1);
+          play(GESTURE_SOUND[target]);
           setTutorialCleared(true);
           tutorialAdvanceAt.current = now + 900;
         }
@@ -347,7 +412,7 @@ export function Arena({ camera, pose, onExit }: Props) {
         }
         if (n <= 0) {
           play('go');
-          pushFx({ kind: 'go', title: 'GO!' });
+          setGoFx((g) => g + 1);
           startGame(now);
         }
       } else if (p === 'game' && sessionRef.current) {
@@ -360,8 +425,9 @@ export function Arena({ camera, pose, onExit }: Props) {
           badQualityMs.current += dt;
           goodQualityMs.current = 0;
         }
-        if (!s.paused && badQualityMs.current > 1200) {
+        if (!s.paused && badQualityMs.current > PAUSE_AFTER_MS) {
           s.pause(now);
+          play('paused');
           setPaused(quality.message);
         } else if (s.paused) {
           if (quality.status === 'ok' && goodQualityMs.current > 700 && !document.hidden) {
@@ -372,7 +438,8 @@ export function Arena({ camera, pose, onExit }: Props) {
           }
         }
 
-        const events = s.update(now, fired);
+        const tracking = quality.status === 'ok';
+        const events = s.update(now, fired, tracking);
         handleGameEvents(events);
         if (phaseRef.current !== 'game') return;
 
@@ -388,6 +455,9 @@ export function Arena({ camera, pose, onExit }: Props) {
             ? { key: 'held', text: 'Reset your pose, then do it again.', tone: 'info' as const, issue: null }
             : coachMessage(prompt.gesture, ev, quality);
           msg = smootherRef.current.update(raw, now);
+          // The coach is visibly flagging a form issue on the requested move: if the
+          // player now fixes it and lands the same move in time, it is a correction.
+          if (msg?.issue && ev.status === 'partial') s.markCoached();
           applyEvaluation(ev, msg);
         } else {
           msg = smootherRef.current.update(quality.status === 'ok' ? null : coachMessage(null, null, quality), now);
@@ -395,14 +465,18 @@ export function Arena({ camera, pose, onExit }: Props) {
         }
         setCoach((c) => (c?.key === msg?.key && c?.text === msg?.text ? c : msg));
         const timeLeftMs = Math.ceil(snap.timeLeftMs / 100) * 100;
+        const trackingLost = !tracking;
+        const gain = gainRef.current;
         setHud((h) =>
           h.score === snap.score &&
           h.combo === snap.combo &&
           h.timeLeftMs === timeLeftMs &&
           h.prompt === prompt &&
-          h.promptHeld === held
+          h.promptHeld === held &&
+          h.trackingLost === trackingLost &&
+          h.gain === gain
             ? h
-            : { score: snap.score, combo: snap.combo, timeLeftMs, prompt, promptHeld: held },
+            : { score: snap.score, combo: snap.combo, timeLeftMs, prompt, promptHeld: held, trackingLost, gain },
         );
       }
 
@@ -412,7 +486,7 @@ export function Arena({ camera, pose, onExit }: Props) {
         drawPose(ctx, frame, c.width, c.height, overlay, Math.min(2, window.devicePixelRatio || 1));
       }
     },
-    [handleGameEvents, pushFx, setPhase, startCountdown, startGame],
+    [handleGameEvents, setPhase, startCountdown, startGame],
   );
 
   usePoseLoop(videoPlaying ? video : null, pose.landmarker, onTick, (e) => {
@@ -422,11 +496,11 @@ export function Arena({ camera, pose, onExit }: Props) {
 
   const playAgain = useCallback(() => startCountdown(), [startCountdown]);
   const recalibrate = useCallback(() => {
-    collectorRef.current = new CalibrationCollector();
-    setCalib({ progress: 0, hint: 'Step into the frame.' });
     setCoach(null);
     setResults(null);
-    setPhase('calibration');
+    checkReadyMs.current = 0;
+    setCheckCanSkip(false);
+    setPhase('check');
   }, [setPhase]);
   const skipTutorial = useCallback(() => startCountdown(), [startCountdown]);
 
@@ -461,13 +535,29 @@ export function Arena({ camera, pose, onExit }: Props) {
             {fps > 0 && <span className="chip chip-fps">{fps} fps</span>}
           </div>
 
+          {phase === 'game' && (
+            <ThreatLayer
+              prompt={hud.prompt}
+              outcome={outcome}
+              anchorY={engineRef.current?.calibration?.shoulderY ?? 0.35}
+              frozen={hud.trackingLost || !!paused}
+            />
+          )}
+          {phase === 'check' && !showSetup && (
+            <CameraCheckPanel report={check} canContinue={checkCanSkip} onContinue={startCalibration} />
+          )}
           {phase === 'calibration' && !showSetup && <CalibrationPanel progress={calib.progress} hint={calib.hint} />}
           {phase === 'tutorial' && !showSetup && (
             <TutorialPanel step={tutorialStep} cleared={tutorialCleared} onSkip={skipTutorial} />
           )}
           {phase === 'countdown' && <Countdown value={countdown} />}
-          {phase === 'game' && <GameHud hud={hud} fx={fx} />}
-          {(phase === 'tutorial' || phase === 'game') && !paused && <CoachBar message={coach} />}
+          {phase === 'game' && <GameHud hud={hud} />}
+          {goFx > 0 && phase === 'game' && (
+            <div className="go-fx" key={`go-${goFx}`} aria-hidden="true">
+              GO!
+            </div>
+          )}
+          {(phase === 'tutorial' || phase === 'game') && !paused && <CoachPanel message={coach} />}
           {phase === 'game' && paused && <PausedPanel message={paused} />}
           {phase === 'results' && results && (
             <ResultsPanel results={results} onPlayAgain={playAgain} onRecalibrate={recalibrate} onHome={onExit} />

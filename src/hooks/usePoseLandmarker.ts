@@ -85,11 +85,12 @@ export function usePoseLandmarker(): LandmarkerApi {
         setStatus('ready');
       },
       (e: unknown) => {
+        console.error('[MotionRush] pose model failed to load', e);
         if (!alive) return;
         setStatus('error');
         setError(
-          `The pose model could not be loaded${e instanceof Error && e.message ? ` (${e.message})` : ''}. ` +
-            'Check your connection and use a recent desktop or mobile browser with WebAssembly support.',
+          'Motion tracking could not start. Check your internet connection and try again — ' +
+            'MotionRush needs a recent Chrome, Edge, Safari or Firefox.',
         );
       },
     );

@@ -1,12 +1,11 @@
 import { GESTURE_INFO } from '../game/gestures';
-import { comboMultiplier } from '../game/scoring';
-import { GAME_DURATION_MS } from '../game/session';
 import type { CameraApi } from '../hooks/useCamera';
 import type { LandmarkerApi } from '../hooks/usePoseLandmarker';
-import type { CoachMessage } from '../motion/errorCoach';
-import type { Fx, HudState } from './Arena';
-import { TUTORIAL_STEPS } from './Arena';
+import type { FramingReport } from '../motion/calibration';
+import type { GestureName } from '../motion/poseTypes';
 import { GestureIcon } from './GestureIcon';
+
+export const TUTORIAL_STEPS: GestureName[] = ['GUARD', 'DUCK', 'PUNCH'];
 
 export function SetupPanel({
   camera,
@@ -22,27 +21,27 @@ export function SetupPanel({
   onExit: () => void;
 }) {
   const cameraFailed = ['denied', 'notfound', 'busy', 'unsupported', 'error'].includes(camera.status);
-  let title = 'Getting ready';
+  let title = 'Starting camera';
   let body: string | null = null;
   let action: { label: string; run: () => void } | null = null;
 
   if (loopError) {
     title = 'Tracking stopped';
     body = loopError;
-    action = { label: 'Reload page', run: () => window.location.reload() };
+    action = { label: 'Reload', run: () => window.location.reload() };
   } else if (cameraFailed) {
-    title = camera.status === 'denied' ? 'Camera blocked' : 'Camera unavailable';
+    title = camera.status === 'denied' ? 'Camera access needed' : 'Camera unavailable';
     body = camera.error;
     action = { label: 'Try again', run: () => void camera.start() };
   } else if (pose.status === 'error') {
-    title = 'Pose model failed';
+    title = 'Could not start motion tracking';
     body = pose.error;
-    action = { label: 'Retry', run: pose.retry };
+    action = { label: 'Try again', run: pose.retry };
   }
 
   const steps = [
     { label: 'Camera permission', done: camera.status === 'ready', active: camera.status === 'requesting' || camera.status === 'idle' },
-    { label: 'Pose model (runs on-device)', done: pose.status === 'ready', active: pose.status === 'loading' },
+    { label: 'Motion tracking (on-device)', done: pose.status === 'ready', active: pose.status === 'loading' },
     { label: 'Video stream', done: videoPlaying, active: camera.status === 'ready' && !videoPlaying },
   ];
 
@@ -76,33 +75,86 @@ export function SetupPanel({
   );
 }
 
+type RowState = 'ok' | 'warn' | 'bad' | 'wait';
+
+export function CameraCheckPanel({
+  report,
+  canContinue,
+  onContinue,
+}: {
+  report: FramingReport | null;
+  canContinue: boolean;
+  onContinue: () => void;
+}) {
+  const r = report;
+  const rows: { label: string; value: string; state: RowState }[] = [
+    { label: 'Camera', value: 'On', state: 'ok' },
+    { label: 'Person', value: r?.person ? 'Detected' : 'Not yet', state: r?.person ? 'ok' : 'wait' },
+    {
+      label: 'Upper body',
+      value: r?.upperBody ? 'In view' : 'Hips not visible',
+      state: !r?.person ? 'wait' : r.upperBody ? 'ok' : 'bad',
+    },
+    {
+      label: 'Distance',
+      value: !r || r.distance === 'unknown' ? '—' : r.distance === 'ok' ? 'Good' : r.distance === 'too_close' ? 'Too close' : 'Too far',
+      state: !r || r.distance === 'unknown' ? 'wait' : r.distance === 'ok' ? 'ok' : 'bad',
+    },
+    {
+      label: 'Knees',
+      value: r?.knees ? 'In view' : 'Recommended',
+      state: !r?.person ? 'wait' : r.knees ? 'ok' : 'warn',
+    },
+    {
+      label: 'Tracking',
+      value: !r || r.confidence === 'none' ? '—' : r.confidence[0].toUpperCase() + r.confidence.slice(1),
+      state: !r || r.confidence === 'none' ? 'wait' : r.confidence === 'good' ? 'ok' : r.confidence === 'fair' ? 'warn' : 'bad',
+    },
+  ];
+  return (
+    <div className="panel panel-side check-panel">
+      <p className="panel-kicker">Step 1 · Camera check</p>
+      <ul className="check-rows">
+        {rows.map((row) => (
+          <li key={row.label} className={`row-${row.state}`}>
+            <span className="row-dot" aria-hidden="true" />
+            <span className="row-label">{row.label}</span>
+            <span className="row-value">{row.value}</span>
+          </li>
+        ))}
+      </ul>
+      <p className={`check-message ${r?.ready ? (r.knees ? 'ok' : 'warn') : 'bad'}`} aria-live="polite">
+        {r?.message ?? 'Looking for you…'}
+      </p>
+      {canContinue && (
+        <button className="btn btn-ghost btn-sm" onClick={onContinue}>
+          Continue without knees
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function CalibrationPanel({ progress, hint }: { progress: number; hint: string }) {
   const r = 46;
   const c = 2 * Math.PI * r;
   const holding = hint.startsWith('Hold');
+  const count = Math.max(1, Math.ceil(3 * (1 - progress)));
   return (
     <div className="panel panel-side calib-panel">
-      <p className="panel-kicker">Step 1 · Calibration</p>
-      <div className="calib-ring">
+      <p className="panel-kicker">Step 2 · Calibrating</p>
+      <h2 className="calib-title">Stand naturally</h2>
+      <div className={`calib-ring ${holding ? 'holding' : ''}`}>
         <svg viewBox="0 0 100 100" aria-hidden="true">
           <circle cx="50" cy="50" r={r} className="ring-bg" />
-          <circle
-            cx="50"
-            cy="50"
-            r={r}
-            className="ring-fg"
-            strokeDasharray={c}
-            strokeDashoffset={c * (1 - progress)}
-          />
+          <circle cx="50" cy="50" r={r} className="ring-fg" strokeDasharray={c} strokeDashoffset={c * (1 - progress)} />
         </svg>
-        <span className="calib-pct">{Math.round(progress * 100)}%</span>
+        <span className="calib-count" key={holding ? count : 'wait'}>
+          {holding ? count : '·'}
+        </span>
       </div>
       <p className={`calib-hint ${holding ? 'ok' : 'warn'}`} aria-live="polite">
         {hint}
-      </p>
-      <p className="panel-sub">
-        Stand relaxed, facing the camera, with your hips (ideally knees too) in view. We measure your standing
-        height so Duck works for your body.
       </p>
     </div>
   );
@@ -114,14 +166,13 @@ export function TutorialPanel({ step, cleared, onSkip }: { step: number; cleared
   return (
     <div className={`panel panel-side tutorial-panel ${cleared ? 'cleared' : ''}`}>
       <p className="panel-kicker">
-        Step 2 · Practice {step + 1}/{TUTORIAL_STEPS.length}
+        Step 3 · Quick training {step + 1}/{TUTORIAL_STEPS.length}
       </p>
       <div className="tutorial-move" key={g}>
         <GestureIcon gesture={g} className="tutorial-icon" />
         <div>
-          <h2>{cleared ? 'Nice!' : info.label}</h2>
-          <p>{info.tip}</p>
-          <p className="gesture-rule">{info.rule}</p>
+          <h2>{cleared ? `${g} ✓` : g}</h2>
+          <p>{cleared ? 'Nice — recognised.' : info.tip}</p>
         </div>
       </div>
       <div className="dots">
@@ -130,7 +181,7 @@ export function TutorialPanel({ step, cleared, onSkip }: { step: number; cleared
         ))}
       </div>
       <button className="btn btn-ghost btn-sm" onClick={onSkip}>
-        Skip practice
+        Skip training
       </button>
     </div>
   );
@@ -140,7 +191,7 @@ export function Countdown({ value }: { value: number }) {
   return (
     <div className="countdown" aria-live="assertive">
       <span key={value}>{value}</span>
-      <p>Get ready</p>
+      <p>Arena starts</p>
     </div>
   );
 }
@@ -148,75 +199,10 @@ export function Countdown({ value }: { value: number }) {
 export function PausedPanel({ message }: { message: string }) {
   return (
     <div className="panel panel-center paused-panel" role="status">
-      <p className="panel-kicker">Paused</p>
-      <h2>{message}</h2>
-      <p className="panel-sub">The round resumes automatically once you are back in frame.</p>
+      <p className="panel-kicker">Paused · clock stopped</p>
+      <h2>{message.startsWith('Paused while') ? 'Welcome back' : 'Step back into frame'}</h2>
+      <p className="panel-sub">{message}</p>
+      <p className="panel-sub">The round resumes automatically — this does not count as a miss.</p>
     </div>
-  );
-}
-
-export function CoachBar({ message }: { message: CoachMessage | null }) {
-  return (
-    <div className="coach-bar" aria-live="polite">
-      {message && (
-        <div key={message.key} className={`coach coach-${message.tone}`}>
-          <span className="coach-tag">{message.tone === 'good' ? 'OK' : message.tone === 'info' ? 'TIP' : 'COACH'}</span>
-          <span className="coach-text">{message.text}</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function GameHud({ hud, fx }: { hud: HudState; fx: Fx | null }) {
-  const secs = Math.ceil(hud.timeLeftMs / 1000);
-  const frac = hud.timeLeftMs / GAME_DURATION_MS;
-  const r = 44;
-  const c = 2 * Math.PI * r;
-  const p = hud.prompt;
-  return (
-    <>
-      <div className="hud-top">
-        <div className="hud-score">
-          <span className="hud-label">Score</span>
-          <span className="hud-value" key={hud.score}>
-            {hud.score.toLocaleString()}
-          </span>
-        </div>
-        <div className={`hud-combo ${hud.combo >= 2 ? 'on' : ''}`}>
-          <span className="hud-label">Combo</span>
-          <span className="hud-value" key={hud.combo}>
-            {hud.combo}
-            <small>×{comboMultiplier(Math.max(1, hud.combo)).toFixed(1)}</small>
-          </span>
-        </div>
-        <div className={`hud-timer ${secs <= 10 ? 'low' : ''}`}>
-          <svg viewBox="0 0 100 100" aria-hidden="true">
-            <circle cx="50" cy="50" r={r} className="ring-bg" />
-            <circle cx="50" cy="50" r={r} className="ring-fg" strokeDasharray={c} strokeDashoffset={c * (1 - frac)} />
-          </svg>
-          <span>{secs}</span>
-        </div>
-      </div>
-
-      {p && (
-        <div className={`prompt prompt-${p.gesture.toLowerCase()}`} key={`prompt-${p.id}`}>
-          <span className="prompt-hazard">{GESTURE_INFO[p.gesture].hazard}</span>
-          <div className="prompt-main">
-            <GestureIcon gesture={p.gesture} className="prompt-icon" />
-            <span className="prompt-word">{p.gesture}</span>
-          </div>
-          <span className="prompt-timer" style={{ animationDuration: `${p.windowMs}ms` }} />
-          {hud.promptHeld && <span className="prompt-held">Release, then go again</span>}
-        </div>
-      )}
-
-      {fx && (
-        <div className={`fx fx-${fx.kind}`} key={`fx-${fx.id}`}>
-          <strong>{fx.title}</strong>
-          {fx.detail && <span>{fx.detail}</span>}
-        </div>
-      )}
-    </>
   );
 }

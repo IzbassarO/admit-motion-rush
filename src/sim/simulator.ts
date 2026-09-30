@@ -72,8 +72,8 @@ export function createSimStream(): MediaStream {
     ctx.scale(-1, 1); // the video element is mirrored; keep this text readable
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
     ctx.font = '600 20px ui-monospace, monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('SIMULATION · hold G / D / P (T, H, B = partial)', -W / 2, 34);
+    ctx.textAlign = 'right';
+    ctx.fillText('SIMULATION · hold G / D / P (T, H, B = partial)', -24, H - 64);
     ctx.restore();
   };
   draw();
